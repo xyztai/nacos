@@ -37,6 +37,9 @@ import com.alibaba.nacos.console.security.nacos.users.NacosUser;
 import com.alibaba.nacos.console.security.nacos.users.NacosUserDetailsServiceImpl;
 import com.alibaba.nacos.console.utils.PasswordEncoderUtil;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.common.collect.Maps;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -57,6 +60,8 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * User related methods entry.
@@ -67,7 +72,19 @@ import java.util.List;
 @RestController("user")
 @RequestMapping({"/v1/auth", "/v1/auth/users"})
 public class UserController {
-    
+    private Logger logger = LoggerFactory.getLogger(UserController.class);
+
+    private final Map<String, Map<String, String>> errorLoginCnt = new ConcurrentHashMap<>(16);
+
+    private static final int LEAST_LENGTH = 8;
+
+    private static final char[] SPECIAL_CHARS = new char[]{'~', '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '-', '_', '=', '+',
+            '[', ']', '{', '}', '?'};
+
+    public static final long DELAY_TIMES = 2 * 60 * 1000L;
+
+    public static final int ALLOW_ERROR_TRY_TIMES = 10;
+
     @Autowired
     private JwtTokenManager jwtTokenManager;
     
@@ -149,6 +166,8 @@ public class UserController {
             response.sendError(HttpServletResponse.SC_FORBIDDEN, "authorization failed!");
         }
 
+        isAllowedPasswd(newPassword);
+
         User user = userDetailsService.getUserFromDatabase(username);
         if (user == null) {
             throw new IllegalArgumentException("user " + username + " not exist!");
@@ -157,6 +176,69 @@ public class UserController {
         userDetailsService.updateUserPassword(username, PasswordEncoderUtil.encode(newPassword));
         
         return RestResultUtils.success("update user ok!");
+    }
+
+    private void isAllowedPasswd(String password) throws IllegalArgumentException {
+        if (password.length() < LEAST_LENGTH) {
+            logger.info("new password's length is too short:{}", password);
+            throw new IllegalArgumentException("密码长度必须 >= 8");
+        }
+
+        boolean hasSpecialChar = false;
+        for (char c : password.toCharArray()) {
+            if (hasSpecialChar) {
+                break;
+            }
+
+            for (char sc : SPECIAL_CHARS) {
+                if (c == sc) {
+                    hasSpecialChar = true;
+                    break;
+                }
+            }
+        }
+
+        if (!hasSpecialChar) {
+            logger.info("new password don't has special char:{}", password);
+            throw new IllegalArgumentException("必须含有特殊字符('~', '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '-', '_', "
+                    +
+                    "'=', '+', '[', ']', '{', '}', '?')");
+        }
+
+        boolean hasUppderChar = false;
+        boolean hasLowerChar = false;
+        boolean hasNumber = false;
+        for (char c : password.toCharArray()) {
+            if (!hasUppderChar && c == Character.toUpperCase(c) && c >= 'A' && c <= 'Z') {
+                hasUppderChar = true;
+                continue;
+            }
+
+            if (!hasLowerChar && c == Character.toLowerCase(c) && c >= 'a' && c <= 'z') {
+                hasLowerChar = true;
+                continue;
+            }
+
+            if (!hasNumber && c >= '0' && c <= '9') {
+                hasNumber = true;
+                continue;
+            }
+        }
+
+        if (!hasUppderChar) {
+            logger.info("new password don't has Upper char:{}", password);
+            throw new IllegalArgumentException("必须含有大写字母！");
+        }
+
+        if (!hasLowerChar) {
+            logger.info("new password don't has Lower char:{}", password);
+            throw new IllegalArgumentException("必须含有小写字母！");
+        }
+
+        if (!hasNumber) {
+            logger.info("new password don't has number:{}", password);
+            throw new IllegalArgumentException("必须含有数字！");
+        }
     }
 
     private boolean hasPermission(String username, HttpServletRequest request) {
@@ -205,21 +287,71 @@ public class UserController {
     @PostMapping("/login")
     public Object login(@RequestParam String username, @RequestParam String password, HttpServletResponse response,
             HttpServletRequest request) throws AccessException {
-        
-        if (AuthSystemTypes.NACOS.name().equalsIgnoreCase(authConfigs.getNacosAuthSystemType()) || AuthSystemTypes.LDAP
-                .name().equalsIgnoreCase(authConfigs.getNacosAuthSystemType())) {
-            NacosUser user = (NacosUser) authManager.login(request);
-            
-            response.addHeader(NacosAuthConfig.AUTHORIZATION_HEADER, NacosAuthConfig.TOKEN_PREFIX + user.getToken());
-            
-            ObjectNode result = JacksonUtils.createEmptyJsonNode();
-            result.put(Constants.ACCESS_TOKEN, user.getToken());
-            result.put(Constants.TOKEN_TTL, authConfigs.getTokenValidityInSeconds());
-            result.put(Constants.GLOBAL_ADMIN, user.isGlobalAdmin());
-            result.put(Constants.USERNAME, user.getUserName());
-            return result;
+
+        Map<String, String> currMap = errorLoginCnt.get(username);
+        long currTime = System.currentTimeMillis();
+        if (null == currMap) {
+            currMap = Maps.newHashMap();
+            currMap.put("errorCnt", "0");
+            currMap.put("lastTryTime", String.valueOf(currTime));
+            currMap.put("nextAllowTryTime", "-1");
+            errorLoginCnt.put(username, currMap);
         }
-        
+
+        long lastTryTime = Long.parseLong(currMap.get("lastTryTime"));
+        if (lastTryTime + DELAY_TIMES <= currTime) {
+            currMap.put("errorCnt", "0");
+            currMap.put("lastTryTime", String.valueOf(currTime));
+            currMap.put("nextAllowTryTime", "-1");
+            errorLoginCnt.put(username, currMap);
+        }
+
+        long nextAllowTryTime = Long.parseLong(currMap.get("nextAllowTryTime"));
+        if (nextAllowTryTime > currTime) {
+            logger.info("forbid to try login now:{}", username);
+            throw new AccessException("试错次数太多，2分钟内禁止再次登录！");
+        }
+
+        logger.error("currMap: {}", currMap);
+
+        try {
+            if (AuthSystemTypes.NACOS.name().equalsIgnoreCase(authConfigs.getNacosAuthSystemType()) || AuthSystemTypes.LDAP
+                    .name().equalsIgnoreCase(authConfigs.getNacosAuthSystemType())) {
+                NacosUser user = (NacosUser) authManager.login(request);
+
+                response.addHeader(NacosAuthConfig.AUTHORIZATION_HEADER, NacosAuthConfig.TOKEN_PREFIX + user.getToken());
+
+                ObjectNode result = JacksonUtils.createEmptyJsonNode();
+                result.put(Constants.ACCESS_TOKEN, user.getToken());
+                result.put(Constants.TOKEN_TTL, authConfigs.getTokenValidityInSeconds());
+                result.put(Constants.GLOBAL_ADMIN, user.isGlobalAdmin());
+                result.put(Constants.USERNAME, user.getUserName());
+
+                // login success
+                currMap.put("errorCnt", "0");
+                currMap.put("lastTryTime", String.valueOf(currTime));
+                currMap.put("nextAllowTryTime", "-1");
+                errorLoginCnt.put(username, currMap);
+
+                logger.error("currMap: {}", currMap);
+                return result;
+            }
+        } catch (Exception e) {
+            Map<String, String> tmpMap = errorLoginCnt.get(username);
+            int errorCode = Integer.parseInt(tmpMap.get("errorCnt"));
+            if (errorCode < ALLOW_ERROR_TRY_TIMES) {
+                tmpMap.put("errorCnt", String.valueOf(++errorCode));
+            } else {
+                tmpMap.put("nextAllowTryTime", String.valueOf(System.currentTimeMillis() + DELAY_TIMES));
+                errorLoginCnt.put(username, tmpMap);
+            }
+            tmpMap.put("lastTryTime", String.valueOf(System.currentTimeMillis()));
+            errorLoginCnt.put(username, tmpMap);
+
+            logger.error("currMap: {}", currMap);
+            throw e;
+        }
+
         // create Authentication class through username and password, the implement class is UsernamePasswordAuthenticationToken
         UsernamePasswordAuthenticationToken authenticationToken = new UsernamePasswordAuthenticationToken(username,
                 password);
@@ -233,8 +365,28 @@ public class UserController {
             String token = jwtTokenManager.createToken(authentication);
             // write Token to Http header
             response.addHeader(NacosAuthConfig.AUTHORIZATION_HEADER, "Bearer " + token);
+
+            // login success
+            currMap.put("errorCnt", "0");
+            currMap.put("lastTryTime", String.valueOf(currTime));
+            currMap.put("nextAllowTryTime", "-1");
+            errorLoginCnt.put(username, currMap);
+
+            logger.error("currMap: {}", currMap);
             return RestResultUtils.success("Bearer " + token);
         } catch (BadCredentialsException authentication) {
+            Map<String, String> tmpMap = errorLoginCnt.get(username);
+            int errorCode = Integer.parseInt(tmpMap.get("errorCnt"));
+            if (errorCode < ALLOW_ERROR_TRY_TIMES) {
+                tmpMap.put("errorCnt", String.valueOf(++errorCode));
+            } else {
+                tmpMap.put("nextAllowTryTime", String.valueOf(System.currentTimeMillis() + DELAY_TIMES));
+                errorLoginCnt.put(username, tmpMap);
+            }
+            tmpMap.put("lastTryTime", String.valueOf(System.currentTimeMillis()));
+            errorLoginCnt.put(username, tmpMap);
+
+            logger.error("currMap: {}", currMap);
             return RestResultUtils.failed(HttpStatus.UNAUTHORIZED.value(), null, "Login failed");
         }
     }
