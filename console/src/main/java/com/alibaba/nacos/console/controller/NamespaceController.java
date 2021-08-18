@@ -26,8 +26,13 @@ import com.alibaba.nacos.console.enums.NamespaceTypeEnum;
 import com.alibaba.nacos.console.model.Namespace;
 import com.alibaba.nacos.console.model.NamespaceAllInfo;
 import com.alibaba.nacos.console.security.nacos.NacosAuthConfig;
+import io.jsonwebtoken.Jwt;
+import io.jsonwebtoken.Jwts;
 import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -51,6 +56,10 @@ import java.util.regex.Pattern;
 @RestController
 @RequestMapping("/v1/console/namespaces")
 public class NamespaceController {
+    private Logger logger = LoggerFactory.getLogger(NamespaceController.class);
+
+    @Autowired
+    private AuthenticationManager authenticationManager;
     
     @Autowired
     private PersistService persistService;
@@ -83,11 +92,19 @@ public class NamespaceController {
     @GetMapping
     public RestResult<List<Namespace>> getNamespaces(HttpServletRequest request, HttpServletResponse response) {
         // TODO 获取用kp
-        List<TenantInfo> tenantInfos = persistService.findTenantByKp(DEFAULT_KP);
+        String token = request.getHeader("accessToken");
+        Jwt username = Jwts.parserBuilder()
+                .requireAudience(token)
+                .build()
+
+
+        logger.info("current user is: {}", username);
+        List<TenantInfo> tenantInfos = persistService.findTenantByUsername(username);
+        //List<TenantInfo> tenantInfos = persistService.findTenantByKp(DEFAULT_KP);
         Namespace namespace0 = new Namespace("", DEFAULT_NAMESPACE, DEFAULT_QUOTA, persistService.configInfoCount(DEFAULT_TENANT),
                 NamespaceTypeEnum.GLOBAL.getType());
         List<Namespace> namespaces = new ArrayList<Namespace>();
-        namespaces.add(namespace0);
+        //namespaces.add(namespace0);
         for (TenantInfo tenantInfo : tenantInfos) {
             int configCount = persistService.configInfoCount(tenantInfo.getTenantId());
             Namespace namespaceTmp = new Namespace(tenantInfo.getTenantId(), tenantInfo.getTenantName(), DEFAULT_QUOTA,
@@ -149,7 +166,11 @@ public class NamespaceController {
                 return false;
             }
         }
+        /*
         persistService.insertTenantInfoAtomic(DEFAULT_KP, namespaceId, namespaceName, namespaceDesc, DEFAULT_CREATE_SOURCE,
+                System.currentTimeMillis());
+        */
+        persistService.insertTenantInfoAtomic(namespaceId, namespaceId, namespaceName, namespaceDesc, DEFAULT_CREATE_SOURCE,
                 System.currentTimeMillis());
         return true;
     }

@@ -1222,6 +1222,14 @@ public interface PersistService {
      * @return {@link TenantInfo}
      */
     TenantInfo findTenantByKp(String kp, String tenantId);
+
+    /**
+     * Query tenant info.
+     *
+     * @param username username
+     * @return {@link TenantInfo} list
+     */
+    List<TenantInfo> findTenantByUsername(String username);
     
     /**
      * Remote tenant info.

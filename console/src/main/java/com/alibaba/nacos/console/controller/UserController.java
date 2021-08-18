@@ -37,6 +37,8 @@ import com.alibaba.nacos.console.security.nacos.users.NacosUser;
 import com.alibaba.nacos.console.security.nacos.users.NacosUserDetailsServiceImpl;
 import com.alibaba.nacos.console.utils.PasswordEncoderUtil;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -67,7 +69,13 @@ import java.util.List;
 @RestController("user")
 @RequestMapping({"/v1/auth", "/v1/auth/users"})
 public class UserController {
-    
+    private Logger logger = LoggerFactory.getLogger(UserController.class);
+
+    private static final int LEAST_LENGTH = 8;
+
+    private static final char[] SPECIAL_CHARS = new char[]{'~', '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '-', '_', '=', '+',
+            '[', ']', '{', '}', '?'};
+
     @Autowired
     private JwtTokenManager jwtTokenManager;
     
@@ -103,6 +111,7 @@ public class UserController {
         if (user != null) {
             throw new IllegalArgumentException("user '" + username + "' already exist!");
         }
+        isAllowedPasswd(password);
         userDetailsService.createUser(username, PasswordEncoderUtil.encode(password));
         return RestResultUtils.success("create user ok!");
     }
@@ -149,6 +158,8 @@ public class UserController {
             response.sendError(HttpServletResponse.SC_FORBIDDEN, "authorization failed!");
         }
 
+        isAllowedPasswd(newPassword);
+
         User user = userDetailsService.getUserFromDatabase(username);
         if (user == null) {
             throw new IllegalArgumentException("user " + username + " not exist!");
@@ -157,6 +168,69 @@ public class UserController {
         userDetailsService.updateUserPassword(username, PasswordEncoderUtil.encode(newPassword));
         
         return RestResultUtils.success("update user ok!");
+    }
+
+    private void isAllowedPasswd(String password) throws IllegalArgumentException {
+        if (password.length() < LEAST_LENGTH) {
+            logger.info("new password's length is too short:{}", password);
+            throw new IllegalArgumentException("密码长度必须 >= 8");
+        }
+
+        boolean hasSpecialChar = false;
+        for (char c : password.toCharArray()) {
+            if (hasSpecialChar) {
+                break;
+            }
+
+            for (char sc : SPECIAL_CHARS) {
+                if (c == sc) {
+                    hasSpecialChar = true;
+                    break;
+                }
+            }
+        }
+
+        if (!hasSpecialChar) {
+            logger.info("new password don't has special char:{}", password);
+            throw new IllegalArgumentException("必须含有特殊字符('~', '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '-', '_', "
+                    +
+                    "'=', '+', '[', ']', '{', '}', '?')");
+        }
+
+        boolean hasUppderChar = false;
+        boolean hasLowerChar = false;
+        boolean hasNumber = false;
+        for (char c : password.toCharArray()) {
+            if (!hasUppderChar && c == Character.toUpperCase(c) && c >= 'A' && c <= 'Z') {
+                hasUppderChar = true;
+                continue;
+            }
+
+            if (!hasLowerChar && c == Character.toLowerCase(c) && c >= 'a' && c <= 'z') {
+                hasLowerChar = true;
+                continue;
+            }
+
+            if (!hasNumber && c >= '0' && c <= '9') {
+                hasNumber = true;
+                continue;
+            }
+        }
+
+        if (!hasUppderChar) {
+            logger.info("new password don't has Upper char:{}", password);
+            throw new IllegalArgumentException("必须含有大写字母！");
+        }
+
+        if (!hasLowerChar) {
+            logger.info("new password don't has Lower char:{}", password);
+            throw new IllegalArgumentException("必须含有小写字母！");
+        }
+
+        if (!hasNumber) {
+            logger.info("new password don't has number:{}", password);
+            throw new IllegalArgumentException("必须含有数字！");
+        }
     }
 
     private boolean hasPermission(String username, HttpServletRequest request) {

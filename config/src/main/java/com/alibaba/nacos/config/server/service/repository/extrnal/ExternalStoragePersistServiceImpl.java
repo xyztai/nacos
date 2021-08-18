@@ -2495,6 +2495,35 @@ public class ExternalStoragePersistServiceImpl implements PersistService {
             throw new RuntimeException(e);
         }
     }
+
+    @Override
+    public List<TenantInfo> findTenantByUsername(String username) {
+        //String sql = "SELECT tenant_id,tenant_name,tenant_desc FROM tenant_info WHERE kp=?";
+        String sql = "select distinct t3.tenant_id, t3.tenant_name, t3.tenant_desc "
+                +
+                " from roles t1, permissions t2, tenant_info t3 "
+                +
+                " where"
+                +
+                "      (t1.`role` = t2.`role` and concat(t3.tenant_id, ':*:*') = t2.resource and t1.username = ?)"
+                +
+                "      or "
+                +
+                "      (t1.`role` = 'ROLE_ADMIN' and t1.username = ?"
+                +
+                " order by 1";
+        try {
+            return this.jt.query(sql, new Object[] {username}, TENANT_INFO_ROW_MAPPER);
+        } catch (CannotGetJdbcConnectionException e) {
+            LogUtil.FATAL_LOG.error("[db-error] " + e.toString(), e);
+            throw e;
+        } catch (EmptyResultDataAccessException e) {
+            return Collections.emptyList();
+        } catch (Exception e) {
+            LogUtil.FATAL_LOG.error("[db-other-error]" + e.getMessage(), e);
+            throw new RuntimeException(e);
+        }
+    }
     
     @Override
     public void removeTenantInfoAtomic(final String kp, final String tenantId) {
@@ -2777,7 +2806,7 @@ public class ExternalStoragePersistServiceImpl implements PersistService {
         }
         return result;
     }
-    
+
     @Override
     public int tenantInfoCountByTenantId(String tenantId) {
         Assert.hasText(tenantId, "tenantId can not be null");
