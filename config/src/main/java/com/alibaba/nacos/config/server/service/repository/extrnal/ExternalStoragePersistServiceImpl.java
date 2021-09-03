@@ -2499,21 +2499,35 @@ public class ExternalStoragePersistServiceImpl implements PersistService {
     @Override
     public List<TenantInfo> findTenantByUsername(String username) {
         //String sql = "SELECT tenant_id,tenant_name,tenant_desc FROM tenant_info WHERE kp=?";
-        String sql = "select distinct t3.tenant_id, t3.tenant_name, t3.tenant_desc "
+        String sql = " select tenant_id, tenant_name, tenant_desc "
                 +
-                " from roles t1, permissions t2, tenant_info t3 "
+                " from "
                 +
-                " where"
+                " ( "
                 +
-                "      (t1.`role` = t2.`role` and concat(t3.tenant_id, ':*:*') = t2.resource and t1.username = ?)"
+                "     select distinct t3.tenant_id, t3.tenant_name, t3.tenant_desc "
                 +
-                "      or "
+                "     from roles t1, permissions t2, tenant_info t3  "
                 +
-                "      (t1.`role` = 'ROLE_ADMIN' and t1.username = ?"
+                "     where t1.`role` = t2.`role` "
                 +
-                " order by 1";
+                "     and concat(t3.tenant_id, ':*:*') = t2.resource "
+                +
+                "     and t1.username = ? "
+                +
+                "     union "
+                +
+                "     select distinct t3.tenant_id, t3.tenant_name, t3.tenant_desc "
+                +
+                "     from roles t1, tenant_info t3 "
+                +
+                "     where t1.`role` = 'ROLE_ADMIN' and t1.username = ? "
+                +
+                " ) t "
+                +
+                " order by 1 ";
         try {
-            return this.jt.query(sql, new Object[] {username}, TENANT_INFO_ROW_MAPPER);
+            return this.jt.query(sql, new Object[] {username, username}, TENANT_INFO_ROW_MAPPER);
         } catch (CannotGetJdbcConnectionException e) {
             LogUtil.FATAL_LOG.error("[db-error] " + e.toString(), e);
             throw e;

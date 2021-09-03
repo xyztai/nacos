@@ -16,6 +16,7 @@
 
 package com.alibaba.nacos.console.controller;
 
+import com.alibaba.nacos.api.common.Constants;
 import com.alibaba.nacos.auth.annotation.Secured;
 import com.alibaba.nacos.auth.common.ActionTypes;
 import com.alibaba.nacos.common.model.RestResult;
@@ -25,14 +26,14 @@ import com.alibaba.nacos.config.server.service.repository.PersistService;
 import com.alibaba.nacos.console.enums.NamespaceTypeEnum;
 import com.alibaba.nacos.console.model.Namespace;
 import com.alibaba.nacos.console.model.NamespaceAllInfo;
+import com.alibaba.nacos.console.security.nacos.JwtTokenManager;
 import com.alibaba.nacos.console.security.nacos.NacosAuthConfig;
-import io.jsonwebtoken.Jwt;
-import io.jsonwebtoken.Jwts;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.core.userdetails.User;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -81,6 +82,9 @@ public class NamespaceController {
     private static final String DEFAULT_TENANT = "";
     
     private static final String DEFAULT_KP = "1";
+
+    @Autowired
+    private JwtTokenManager jwtTokenManager;
     
     /**
      * Get namespace list.
@@ -92,19 +96,21 @@ public class NamespaceController {
     @GetMapping
     public RestResult<List<Namespace>> getNamespaces(HttpServletRequest request, HttpServletResponse response) {
         // TODO 获取用kp
-        String token = request.getHeader("accessToken");
-        Jwt username = Jwts.parserBuilder()
-                .requireAudience(token)
-                .build()
+        logger.info("################ stub(tai) filter namespace that not belonged to current login user");
+        String token = request.getParameter(Constants.ACCESS_TOKEN);
+        //        Jwt username = Jwts.parserBuilder()
+        //                .requireAudience(token)
+        //                .build()
+        logger.info("################ stub(tai) token is: {}", token);
+        String username = ((User) jwtTokenManager.getAuthentication(token).getPrincipal()).getUsername();
 
-
-        logger.info("current user is: {}", username);
+        logger.info("################ stub(tai) current user is: {}", username);
         List<TenantInfo> tenantInfos = persistService.findTenantByUsername(username);
         //List<TenantInfo> tenantInfos = persistService.findTenantByKp(DEFAULT_KP);
         Namespace namespace0 = new Namespace("", DEFAULT_NAMESPACE, DEFAULT_QUOTA, persistService.configInfoCount(DEFAULT_TENANT),
                 NamespaceTypeEnum.GLOBAL.getType());
         List<Namespace> namespaces = new ArrayList<Namespace>();
-        //namespaces.add(namespace0);
+        namespaces.add(namespace0);
         for (TenantInfo tenantInfo : tenantInfos) {
             int configCount = persistService.configInfoCount(tenantInfo.getTenantId());
             Namespace namespaceTmp = new Namespace(tenantInfo.getTenantId(), tenantInfo.getTenantName(), DEFAULT_QUOTA,
