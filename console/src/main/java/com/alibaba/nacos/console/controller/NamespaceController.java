@@ -96,15 +96,10 @@ public class NamespaceController {
     @GetMapping
     public RestResult<List<Namespace>> getNamespaces(HttpServletRequest request, HttpServletResponse response) {
         // TODO 获取用kp
-        logger.info("################ stub(tai) filter namespace that not belonged to current login user");
         String token = request.getParameter(Constants.ACCESS_TOKEN);
-        //        Jwt username = Jwts.parserBuilder()
-        //                .requireAudience(token)
-        //                .build()
-        logger.info("################ stub(tai) token is: {}", token);
         String username = ((User) jwtTokenManager.getAuthentication(token).getPrincipal()).getUsername();
 
-        logger.info("################ stub(tai) current user is: {}", username);
+        logger.info("################ current user is: {}", username);
         List<TenantInfo> tenantInfos = persistService.findTenantByUsername(username);
         //List<TenantInfo> tenantInfos = persistService.findTenantByKp(DEFAULT_KP);
         Namespace namespace0 = new Namespace("", DEFAULT_NAMESPACE, DEFAULT_QUOTA, persistService.configInfoCount(DEFAULT_TENANT),
